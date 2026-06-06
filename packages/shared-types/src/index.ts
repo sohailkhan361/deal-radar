@@ -11,12 +11,15 @@ export type {
   DealDetailResponse,
   DealHealthFields,
   DealHygieneInfo,
+  DealListItemResponse,
   DealResponse,
   DealState,
   HygieneAction,
   HygieneCategory,
   MeddiccFields,
   PaginationMeta,
+  PaginatedDealsResponse,
+  PaginatedDealDetailResponse,
 } from './deals';
 
 export interface Deal {
