@@ -10,7 +10,8 @@
     "dev": "npm run dev --workspaces",
     "build": "npm run build --workspaces",
     "start": "npm run start --workspaces",
-    "lint": "npm run lint --workspaces"
+    "lint": "npm run lint --workspaces",
+    "mock": "tsx scripts/mock-generator.ts"
   },
   "devDependencies": {
     "typescript": "^5.0.0",
