@@ -8,8 +8,8 @@ import OpenAI from 'openai';
 import { checkHygiene } from './hygiene';
 import type { DealScoringInput, ScoreResult, ScoreSuccess } from './types';
 
-export type { DealScoringInput, ScoreResult, ScoreSuccess, HygieneFailure } from './types';
-export type { HygieneAction, HygieneResult, HygieneSeverity } from './hygiene';
+export type { DealScoringInput, ScoreResult, ScoreSuccess, HygieneFailure, ActivitySnapshot, MeddiccFields, SourceSnapshot } from './types';
+export type { HygieneAction, HygieneCategory, HygieneResult, HygieneSeverity } from './hygiene';
 export { checkHygiene } from './hygiene';
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ function buildPrompt(deal: DealScoringInput): string {
 // Response parsing
 // ---------------------------------------------------------------------------
 
-function parseResponse(raw: string): ScoreSuccess {
+function parseResponse(raw: string): Omit<ScoreSuccess, 'warnings'> {
   let json = raw.trim();
 
   if (json.startsWith('```')) {
@@ -122,8 +122,9 @@ function parseResponse(raw: string): ScoreSuccess {
  * Score a deal using MEDDICC methodology.
  *
  * 1. Runs hygiene checks first.
- *    - If the deal has blocking issues, returns `{ cannotScore: true, missingFields, hygieneActions }`.
- * 2. If clean, calls OpenAI and returns the full scored result.
+ *    - If the deal has BLOCKING issues, returns `{ cannotScore: true, missingFields, hygieneActions }`.
+ * 2. If clean (or only warnings), calls OpenAI and returns the full scored result.
+ *    Warnings are attached to the score result so the dashboard can surface them.
  */
 export async function scoreDeal(deal: DealScoringInput): Promise<ScoreResult> {
   // --- Hygiene gate ---
@@ -145,5 +146,5 @@ export async function scoreDeal(deal: DealScoringInput): Promise<ScoreResult> {
   const raw = completion.choices[0]?.message?.content ?? '';
   const result = parseResponse(raw);
 
-  return { cannotScore: false, ...result };
+  return { cannotScore: false, ...result, warnings: hygiene.warnings };
 }

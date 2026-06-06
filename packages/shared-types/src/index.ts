@@ -14,6 +14,7 @@ export type {
   DealResponse,
   DealState,
   HygieneAction,
+  HygieneCategory,
   MeddiccFields,
   PaginationMeta,
 } from './deals';

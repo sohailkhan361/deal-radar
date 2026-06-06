@@ -8,24 +8,38 @@ export type DealState = {
 // Hygiene
 // ---------------------------------------------------------------------------
 
+/** Logical grouping of the hygiene issue — mirrors HygieneCategory in ai-engine */
+export type HygieneCategory =
+  | 'MEDDICC'
+  | 'ACTIVITY'
+  | 'CLOSE_DATE'
+  | 'DEAL_VALUE'
+  | 'STAGE'
+  | 'SOURCE_CONFLICT';
+
 export type HygieneAction = {
+  /** Dot-path to the offending field, e.g. "meddicc.champion" */
   field: string;
   severity: 'BLOCKING' | 'WARNING';
+  category: HygieneCategory;
   message: string;
+  /** Concrete step a rep should take to fix this */
   action: string;
 };
 
 /**
- * Present on a deal response when validationStatus === 'HYGIENE_FAIL'.
- * Surfaces actionable guidance directly on the deal object.
+ * Present on a deal response to surface data quality state.
+ * Populated for both FAIL (cannotScore) and WARN (scored with caveats) states.
  */
 export type DealHygieneInfo = {
   /** Whether the deal could not be scored due to data quality issues */
   cannotScore: boolean;
-  /** hygieneStatus: UNCHECKED | PASS | FAIL */
+  /** UNCHECKED | PASS | WARN | FAIL */
   hygieneStatus: string;
-  /** Field names that are missing or conflicting */
+  /** Field names that are missing or conflicting (BLOCKING only) */
   missingFields: string[];
+  /** Full actionable guidance — includes BLOCKING and WARNING items */
+  hygieneActions: HygieneAction[];
   /** ISO timestamp of last hygiene check */
   lastHygieneAt: string | null;
 };

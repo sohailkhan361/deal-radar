@@ -71,8 +71,14 @@ export type ScoreSuccess = {
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
   reasoning: string;
   recommendedAction: string;
+  /** Non-blocking hygiene warnings surfaced alongside a successful score */
+  warnings: import('./hygiene').HygieneAction[];
 };
 
+/**
+ * Returned when hygiene checks block scoring.
+ * hygieneActions carries full actionable guidance per field.
+ */
 export type HygieneFailure = {
   cannotScore: true;
   missingFields: string[];

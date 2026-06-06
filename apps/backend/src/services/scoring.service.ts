@@ -8,7 +8,8 @@
 
 import type { Activity, Deal, PrismaClient } from '@prisma/client';
 import { scoreDeal } from '@deal-radar/ai-engine';
-import type { DealScoringInput, ActivitySnapshot, MeddiccFields } from '@deal-radar/ai-engine';
+import type { DealScoringInput, ActivitySnapshot, MeddiccFields, HygieneAction } from '@deal-radar/ai-engine';
+import { Prisma } from '@prisma/client';
 
 type TransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
@@ -52,6 +53,10 @@ function extractSummary(payload: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+function serialiseHygieneActions(actions: HygieneAction[]): Prisma.InputJsonValue {
+  return actions as unknown as Prisma.InputJsonValue;
+}
+
 // ---------------------------------------------------------------------------
 // Main scoring function
 // ---------------------------------------------------------------------------
@@ -61,6 +66,11 @@ function extractSummary(payload: Record<string, unknown>): string | undefined {
  *
  * Called from the worker after applyEvent().
  * Persists the result to the Deal row via the provided transaction client.
+ *
+ * Possible outcomes:
+ *   HYGIENE_FAIL  — BLOCKING issues found; hygieneActions JSON persisted for the dashboard.
+ *   HYGIENE_WARN  — Deal scored but non-blocking warnings exist; warnings persisted.
+ *   SCORED        — Clean score with no warnings.
  */
 export async function scoreAndPersist(
   tx: TransactionClient,
@@ -82,11 +92,12 @@ export async function scoreAndPersist(
     const result = await scoreDeal(input);
 
     if (result.cannotScore) {
-      // Hygiene gate: persist the failure for the dashboard to surface
+      // --- Hygiene gate: cannot score ---
       updateData = {
         validationStatus: 'HYGIENE_FAIL',
         hygieneStatus: 'FAIL',
         missingFields: result.missingFields,
+        hygieneActions: serialiseHygieneActions(result.hygieneActions),
         lastHygieneAt: new Date(),
         // Clear any stale score from a previous pass
         healthScore: null,
@@ -95,17 +106,27 @@ export async function scoreAndPersist(
         recommendedAction: null,
       };
 
+      const blockingCount = result.hygieneActions.filter(a => a.severity === 'BLOCKING').length;
+      const warningCount = result.hygieneActions.filter(a => a.severity === 'WARNING').length;
+
       console.warn('[scoring] Deal cannot be scored — hygiene issues found', {
         dealId: deal.dealId,
+        blocking: blockingCount,
+        warnings: warningCount,
         missingFields: result.missingFields,
-        hygieneActions: result.hygieneActions.map(a => `[${a.severity}] ${a.field}: ${a.message}`),
+        actions: result.hygieneActions.map(
+          a => `[${a.severity}][${a.category}] ${a.field}: ${a.message}`,
+        ),
       });
     } else {
-      // Successful score
+      // --- Successful score ---
+      const hasWarnings = result.warnings.length > 0;
+
       updateData = {
         validationStatus: 'SCORED',
-        hygieneStatus: 'PASS',
+        hygieneStatus: hasWarnings ? 'WARN' : 'PASS',
         missingFields: [],
+        hygieneActions: hasWarnings ? serialiseHygieneActions(result.warnings) : Prisma.JsonNull,
         lastHygieneAt: new Date(),
         healthScore: result.score,
         riskLevel: result.riskLevel,
@@ -117,7 +138,17 @@ export async function scoreAndPersist(
         dealId: deal.dealId,
         score: result.score,
         riskLevel: result.riskLevel,
+        warnings: result.warnings.length,
       });
+
+      if (hasWarnings) {
+        console.warn('[scoring] Non-blocking hygiene warnings', {
+          dealId: deal.dealId,
+          warnings: result.warnings.map(
+            w => `[${w.category}] ${w.field}: ${w.message}`,
+          ),
+        });
+      }
     }
   } catch (error) {
     // Scoring errors are non-fatal — log but don't fail the transaction

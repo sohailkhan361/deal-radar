@@ -22,8 +22,9 @@ model Deal {
   recommendedAction String?
 
   // Hygiene tracking — populated when cannotScore: true
-  hygieneStatus    String     @default("UNCHECKED") // UNCHECKED | PASS | FAIL
+  hygieneStatus    String     @default("UNCHECKED") // UNCHECKED | PASS | FAIL | WARN
   missingFields    String[]   @default([])
+  hygieneActions   Json?      // serialised HygieneAction[] — BLOCKING + WARNING items
   lastHygieneAt    DateTime?
 
   // MEDDICC qualification fields
