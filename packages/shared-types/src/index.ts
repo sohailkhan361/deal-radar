@@ -10,8 +10,11 @@ export type {
   ActivityResponse,
   DealDetailResponse,
   DealHealthFields,
+  DealHygieneInfo,
   DealResponse,
   DealState,
+  HygieneAction,
+  MeddiccFields,
   PaginationMeta,
 } from './deals';
 

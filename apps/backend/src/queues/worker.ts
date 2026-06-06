@@ -4,6 +4,7 @@ import { queueService } from './queue.service';
 import prisma from '../services/prisma.service';
 import { activityService } from '../services/activity.service';
 import { dealService } from '../services/deal.service';
+import { scoreAndPersist } from '../services/scoring.service';
 import { eventStream } from '../sse/event-stream';
 
 let dealEventsWorker: ReturnType<typeof queueService.registerWorker<DealEventJobData, DealEventJobResult, DealEventJobName>> | null = null;
@@ -32,8 +33,17 @@ export const registerDealEventsWorker = () => {
 
           await dealService.ensureDeal(tx, event);
           await activityService.saveActivity(tx, event);
-          await dealService.applyEvent(tx, event);
+          const updatedDeal = await dealService.applyEvent(tx, event);
           await activityService.storeProcessedEvent(tx, event.eventId);
+
+          // Fetch all activities for this deal to inform scoring
+          const activities = await tx.activity.findMany({
+            where: { dealId: event.dealId },
+            orderBy: { occurredAt: 'desc' },
+          });
+
+          // Score the deal (non-fatal — errors are caught inside scoreAndPersist)
+          await scoreAndPersist(tx, updatedDeal, activities);
 
           console.log(`[worker:${DEAL_EVENTS_QUEUE_NAME}] Event processed`, {
             eventId: event.eventId,

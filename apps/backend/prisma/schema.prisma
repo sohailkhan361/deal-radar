@@ -13,10 +13,28 @@ model Deal {
   stage            String
   amount           Decimal
   closeDate        DateTime
+
+  // AI health fields
   healthScore      Float?
   riskLevel        String?
   validationStatus String     @default("PENDING")
   aiReasoning      String?
+  recommendedAction String?
+
+  // Hygiene tracking — populated when cannotScore: true
+  hygieneStatus    String     @default("UNCHECKED") // UNCHECKED | PASS | FAIL
+  missingFields    String[]   @default([])
+  lastHygieneAt    DateTime?
+
+  // MEDDICC qualification fields
+  meddiccMetrics          String?
+  meddiccEconomicBuyer    String?
+  meddiccDecisionCriteria String?
+  meddiccDecisionProcess  String?
+  meddiccIdentifyPain     String?
+  meddiccChampion         String?
+  meddiccCompetition      String?
+
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
 
