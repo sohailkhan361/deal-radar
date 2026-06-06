@@ -1,4 +1,4 @@
-# Deal Radar
+<img width="1352" height="804" alt="Screenshot 2026-06-06 at 9 06 32 PM" src="https://github.com/user-attachments/assets/b12f4596-8245-40b3-bd1d-ec0dcff52abe" /># Deal Radar
 
 Deal Radar is a real-time deal tracking platform that ingests CRM events, processes them asynchronously, persists deal state, and streams live updates to a dashboard.
 
@@ -828,3 +828,10 @@ Payload fields commonly used for deal updates: `amount`, `close_date`, `stage`, 
 ## License
 
 Private — POC project.
+
+## Screenshots
+<img width="1352" height="804" alt="Screenshot 2026-06-06 at 9 06 32 PM" src="https://github.com/user-attachments/assets/6fe29dcd-b6b2-489d-b194-988051213156" /><img width="1352" height="805" alt="Screenshot 2026-06-06 at 9 07 20 PM" src="https://github.com/user-attachments/assets/c5b4c493-ea2b-4bae-a579-ee6b805fc4cf" />
+<img width="1352" height="803" alt="Screenshot 2026-06-06 at 9 07 11 PM" src="https://github.com/user-attachments/assets/971db0bd-41e5-495b-b32b-f0e87f529622" />
+<img width="1352" height="806" alt="Screenshot 2026-06-06 at 9 06 52 PM" src="https://github.com/user-attachments/assets/5ba5ec5b-a306-4b91-b315-5976e4fe53d2" />
+<img width="1352" height="803" alt="Screenshot 2026-06-06 at 9 06 41 PM" src="https://github.com/user-attachments/assets/c63a6e72-a231-4c8f-aa4c-c939474467ba" />
+
