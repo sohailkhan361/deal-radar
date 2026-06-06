@@ -10,6 +10,8 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@bull-board/api": "7.1.5",
+    "@bull-board/express": "7.1.5",
     "@deal-radar/ai-engine": "*",
     "@deal-radar/shared-types": "*",
     "@deal-radar/validation-engine": "*",
