@@ -5,9 +5,12 @@ import morgan from 'morgan';
 import { env } from './config/env';
 import routes from './routes';
 import { errorHandler } from './middlewares/error';
+import { registerDealEventsWorker } from './queues';
 
 const app = express();
 const port = parseInt(env.PORT, 10);
+
+registerDealEventsWorker();
 
 // Middlewares
 app.use(helmet());
