@@ -4,6 +4,7 @@ import { queueService } from './queue.service';
 import prisma from '../services/prisma.service';
 import { activityService } from '../services/activity.service';
 import { dealService } from '../services/deal.service';
+import { eventStream } from '../sse/event-stream';
 
 let dealEventsWorker: ReturnType<typeof queueService.registerWorker<DealEventJobData, DealEventJobResult, DealEventJobName>> | null = null;
 
@@ -18,7 +19,7 @@ export const registerDealEventsWorker = () => {
       const event = job.data;
 
       try {
-        await prisma.$transaction(async tx => {
+        const processed = await prisma.$transaction(async tx => {
           const alreadyProcessed = await activityService.hasProcessedEvent(tx, event.eventId);
 
           if (alreadyProcessed) {
@@ -26,7 +27,7 @@ export const registerDealEventsWorker = () => {
               eventId: event.eventId,
               jobId: job.id,
             });
-            return;
+            return false;
           }
 
           await dealService.ensureDeal(tx, event);
@@ -40,7 +41,13 @@ export const registerDealEventsWorker = () => {
             eventType: event.eventType,
             jobId: job.id,
           });
+
+          return true;
         });
+
+        if (processed) {
+          eventStream.broadcastProcessedEvent(event);
+        }
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
           console.log(`[worker:${DEAL_EVENTS_QUEUE_NAME}] Skipping duplicate event`, {
