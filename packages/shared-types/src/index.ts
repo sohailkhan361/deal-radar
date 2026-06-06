@@ -21,12 +21,3 @@ export type {
   PaginatedDealsResponse,
   PaginatedDealDetailResponse,
 } from './deals';
-
-export interface Deal {
-  id: string;
-  title: string;
-  description: string;
-  status: 'PENDING' | 'ACTIVE' | 'CLOSED';
-  createdAt: Date;
-  updatedAt: Date;
-}

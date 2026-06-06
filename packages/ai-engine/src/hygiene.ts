@@ -57,9 +57,6 @@ export type HygieneResult =
 /** Stages considered "late" — full MEDDICC required */
 const LATE_STAGES = new Set(['PROPOSAL', 'NEGOTIATION', 'CLOSING', 'CLOSED']);
 
-/** Stages considered "early" — only core MEDDICC fields required */
-const EARLY_STAGES = new Set(['DISCOVERY', 'QUALIFICATION', 'PROSPECT']);
-
 /**
  * Activity staleness limits (in days) by deal stage.
  * Later stages tolerate much less silence.

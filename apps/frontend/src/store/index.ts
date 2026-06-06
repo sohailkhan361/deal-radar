@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+// Central re-export point for all frontend stores.
+// Add new Zustand stores here as the app grows.
 
 export {
   MAX_STREAM_EVENTS,
@@ -7,13 +8,3 @@ export {
   type ConnectionStatus,
   type StreamEvent,
 } from './event-stream';
-
-interface AppState {
-  deals: any[];
-  setDeals: (deals: any[]) => void;
-}
-
-export const useAppStore = create<AppState>((set) => ({
-  deals: [],
-  setDeals: (deals) => set({ deals }),
-}));
