@@ -1,8 +1,8 @@
-import { CalendarClock, Mail, MessageSquareText, MoveRight, NotebookText } from 'lucide-react';
+import { CalendarClock, CircleCheckBig, Mail, MessageSquareText, MoveRight, NotebookText } from 'lucide-react';
 
 export type ActivityEvent = {
   id: string;
-  type: 'stage_changed' | 'email_sent' | 'meeting_booked' | 'note_added';
+  type: 'stage_changed' | 'email_sent' | 'meeting_booked' | 'note_added' | 'deal_closed';
   dealName: string;
   title: string;
   description: string;
@@ -31,6 +31,11 @@ const eventMeta = {
     label: 'Note added',
     icon: NotebookText,
     tone: 'bg-rose-100 text-rose-800 ring-rose-200',
+  },
+  deal_closed: {
+    label: 'Deal closed',
+    icon: CircleCheckBig,
+    tone: 'bg-violet-100 text-violet-800 ring-violet-200',
   },
 } satisfies Record<ActivityEvent['type'], { label: string; icon: typeof MessageSquareText; tone: string }>;
 
