@@ -6,6 +6,15 @@ export type {
   SseEventName,
 } from './sse';
 
+export type {
+  ActivityResponse,
+  DealDetailResponse,
+  DealHealthFields,
+  DealResponse,
+  DealState,
+  PaginationMeta,
+} from './deals';
+
 export interface Deal {
   id: string;
   title: string;

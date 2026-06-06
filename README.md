@@ -134,7 +134,8 @@ deal-radar/
 | **Webhook** | `src/controllers/webhook.controller.ts` | Validates incoming deal events (snake_case or camelCase), enqueues to BullMQ |
 | **Worker** | `src/queues/worker.ts` | Processes jobs: deduplication, deal upsert, activity logging, SSE broadcast |
 | **SSE stream** | `src/sse/event-stream.ts` | Manages connected clients, heartbeats every 30s, broadcasts processed events |
-| **Deal service** | `src/services/deal.service.ts` | Creates/updates deals from event payloads |
+| **Deal service** | `src/services/deal.service.ts` | Creates/updates deals from event payloads, serves deal queries |
+| **Deal controller** | `src/controllers/deal.controller.ts` | Paginated deal list and deal detail endpoints |
 | **Activity service** | `src/services/activity.service.ts` | Persists activity records and tracks processed event IDs |
 | **Prisma** | `prisma/schema.prisma` | Postgres models: `Deal`, `Activity`, `ProcessedEvent`, `DeadLetterEvent` |
 
@@ -143,6 +144,8 @@ deal-radar/
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check |
+| `GET` | `/api/deals` | Paginated deal list with state, health, and activities |
+| `GET` | `/api/deals/:dealId` | Single deal with state, health, and paginated activities |
 | `POST` | `/api/webhook` | Ingest CRM deal events |
 | `GET` | `/api/events/stream` | SSE live event stream |
 
@@ -418,6 +421,125 @@ Returns server status.
 ```json
 { "status": "ok" }
 ```
+
+### `GET /api/deals`
+
+Returns a paginated list of deals with current state, health fields, and recent activities.
+
+**Query parameters:**
+
+| Param | Default | Max | Description |
+|---|---|---|---|
+| `page` | `1` | — | Page number (1-based) |
+| `limit` | `20` | `100` | Deals per page |
+| `activityLimit` | `10` | `50` | Recent activities included per deal (`0` for none) |
+
+**Example:**
+
+```bash
+curl "http://localhost:4000/api/deals?page=1&limit=20&activityLimit=10"
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "uuid",
+      "dealId": "deal-acme-001",
+      "state": {
+        "stage": "PROPOSAL",
+        "amount": "120000",
+        "closeDate": "2026-07-01T00:00:00.000Z"
+      },
+      "health": {
+        "healthScore": null,
+        "riskLevel": null,
+        "validationStatus": "PENDING",
+        "aiReasoning": null
+      },
+      "activities": [
+        {
+          "id": "uuid",
+          "eventId": "evt-001",
+          "eventType": "stage_changed",
+          "payload": {},
+          "occurredAt": "2026-06-06T12:00:00.000Z",
+          "createdAt": "2026-06-06T12:00:01.000Z"
+        }
+      ],
+      "activityCount": 15,
+      "createdAt": "2026-06-06T10:00:00.000Z",
+      "updatedAt": "2026-06-06T12:00:01.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 4,
+    "totalPages": 1,
+    "hasMore": false
+  }
+}
+```
+
+### `GET /api/deals/:dealId`
+
+Returns a single deal with current state, health fields, and paginated activities.
+
+**Query parameters:**
+
+| Param | Default | Max | Description |
+|---|---|---|---|
+| `page` | `1` | — | Activity page number (1-based) |
+| `limit` | `20` | `100` | Activities per page |
+
+**Example:**
+
+```bash
+curl "http://localhost:4000/api/deals/deal-acme-001?page=1&limit=20"
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "id": "uuid",
+    "dealId": "deal-acme-001",
+    "state": {
+      "stage": "PROPOSAL",
+      "amount": "120000",
+      "closeDate": "2026-07-01T00:00:00.000Z"
+    },
+    "health": {
+      "healthScore": null,
+      "riskLevel": null,
+      "validationStatus": "PENDING",
+      "aiReasoning": null
+    },
+    "activities": [],
+    "createdAt": "2026-06-06T10:00:00.000Z",
+    "updatedAt": "2026-06-06T12:00:01.000Z"
+  },
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 15,
+    "totalPages": 1,
+    "hasMore": false
+  }
+}
+```
+
+**Responses:**
+
+| Status | Meaning |
+|---|---|
+| `200` | Deal found |
+| `400` | Invalid pagination parameters |
+| `404` | Deal not found |
 
 ### `POST /api/webhook`
 

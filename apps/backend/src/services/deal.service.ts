@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import type { DealEventJobData } from '../queues';
+import prisma from './prisma.service';
 
 type TransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 
@@ -127,6 +128,71 @@ export class DealService {
       },
       data: buildDealUpdate(event),
     });
+  }
+
+  async listDeals(page: number, limit: number, activityLimit: number) {
+    const skip = (page - 1) * limit;
+
+    const [deals, total] = await Promise.all([
+      prisma.deal.findMany({
+        skip,
+        take: limit,
+        orderBy: {
+          updatedAt: 'desc',
+        },
+        include: {
+          activities: {
+            take: activityLimit,
+            orderBy: {
+              occurredAt: 'desc',
+            },
+          },
+          _count: {
+            select: {
+              activities: true,
+            },
+          },
+        },
+      }),
+      prisma.deal.count(),
+    ]);
+
+    return { deals, total };
+  }
+
+  async getDealByDealId(dealId: string, activityPage: number, activityLimit: number) {
+    const activitySkip = (activityPage - 1) * activityLimit;
+
+    const [deal, activityTotal] = await Promise.all([
+      prisma.deal.findUnique({
+        where: {
+          dealId,
+        },
+        include: {
+          activities: {
+            skip: activitySkip,
+            take: activityLimit,
+            orderBy: {
+              occurredAt: 'desc',
+            },
+          },
+        },
+      }),
+      prisma.activity.count({
+        where: {
+          dealId,
+        },
+      }),
+    ]);
+
+    if (!deal) {
+      return null;
+    }
+
+    return {
+      deal,
+      activityTotal,
+    };
   }
 }
 
