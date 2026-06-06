@@ -800,6 +800,10 @@ Run from the **repository root**:
 ```bash
 docker compose down -v
 docker compose up -d postgres redis
+docker compose up backend
+
+curl http://localhost:4000/health
+
 npm run prisma:migrate -w @deal-radar/backend
 ```
 
