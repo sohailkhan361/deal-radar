@@ -8,10 +8,41 @@ datasource db {
 }
 
 model Deal {
-  id          String   @id @default(uuid())
-  title       String
-  description String
-  status      String   @default("PENDING")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id               String     @id @default(uuid())
+  dealId           String     @unique
+  stage            String
+  amount           Decimal
+  closeDate        DateTime
+  healthScore      Float?
+  riskLevel        String?
+  validationStatus String     @default("PENDING")
+  aiReasoning      String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  activities       Activity[]
 }
+
+model Activity {
+  id         String   @id @default(uuid())
+  eventId    String   @unique
+  dealId     String
+  deal       Deal     @relation(fields: [dealId], references: [dealId])
+  eventType  String
+  payload    Json
+  occurredAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+}
+
+model ProcessedEvent {
+  eventId     String   @id
+  processedAt DateTime @default(now())
+}
+
+model DeadLetterEvent {
+  id         String   @id @default(uuid())
+  rawPayload Json
+  reason     String
+  failedAt   DateTime @default(now())
+}
+
