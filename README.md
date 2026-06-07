@@ -1,6 +1,7 @@
 <img width="1352" height="804" alt="Screenshot 2026-06-06 at 9 06 32 PM" src="https://github.com/user-attachments/assets/b12f4596-8245-40b3-bd1d-ec0dcff52abe" /># Deal Radar
 
-Deal Radar is a real-time deal tracking platform that ingests CRM events, processes them asynchronously, persists deal state, and streams live updates to a dashboard.
+Deal Radar: a real-time AI co-pilot for Account Executives.
+It is a real-time deal tracking platform that ingests CRM events, processes them asynchronously, persists deal state, and streams live updates to a dashboard.
 
 The system is built as an npm monorepo with an Express backend, a Next.js frontend, shared packages, and a mock CRM event generator for local development.
 
