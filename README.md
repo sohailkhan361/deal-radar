@@ -1,9 +1,21 @@
-<img width="1352" height="804" alt="Screenshot 2026-06-06 at 9 06 32 PM" src="https://github.com/user-attachments/assets/b12f4596-8245-40b3-bd1d-ec0dcff52abe" /># Deal Radar
+<img width="1352" height="804" alt="Deal Radar Dashboard" src="https://github.com/user-attachments/assets/b12f4596-8245-40b3-bd1d-ec0dcff52abe" />
 
-Deal Radar: a real-time AI co-pilot for Account Executives.
-It is a real-time deal tracking platform that ingests CRM events, processes them asynchronously, persists deal state, and streams live updates to a dashboard.
+# Deal Radar
 
-The system is built as an npm monorepo with an Express backend, a Next.js frontend, shared packages, and a mock CRM event generator for local development.
+**Real-time AI co-pilot for B2B sales pipelines.**
+
+Deal Radar ingests CRM events, enforces MEDDICC data quality, scores every deal with OpenAI, and streams live health intelligence to a monitoring dashboard — all in near real-time.
+
+Built as an npm monorepo: Express backend · Next.js frontend · BullMQ job queue · Prisma + PostgreSQL · Redis · OpenAI GPT-4o-mini.
+
+---
+
+## Screenshots
+
+<img width="1352" height="803" alt="Deal Panel — scored deal" src="https://github.com/user-attachments/assets/971db0bd-41e5-495b-b32b-f0e87f529622" />
+<img width="1352" height="805" alt="Deal Panel — hygiene failure" src="https://github.com/user-attachments/assets/c5b4c493-ea2b-4bae-a579-ee6b805fc4cf" />
+<img width="1352" height="806" alt="Activity Stream" src="https://github.com/user-attachments/assets/5ba5ec5b-a306-4b91-b315-5976e4fe53d2" />
+<img width="1352" height="803" alt="Bull Board queue monitor" src="https://github.com/user-attachments/assets/c63a6e72-a231-4c8f-aa4c-c939474467ba" />
 
 ---
 
@@ -12,16 +24,15 @@ The system is built as an npm monorepo with an Express backend, a Next.js fronte
 - [What it does](#what-it-does)
 - [Architecture](#architecture)
 - [Repository structure](#repository-structure)
-- [What each part does](#what-each-part-does)
 - [Prerequisites](#prerequisites)
+- [Quick start — run on any machine](#quick-start--run-on-any-machine)
 - [Environment variables](#environment-variables)
-- [Quick start](#quick-start)
 - [Running the application](#running-the-application)
 - [Mock event generator](#mock-event-generator)
 - [API reference](#api-reference)
-- [Live activity stream (SSE)](#live-activity-stream-sse)
+- [Queue monitor — Bull Board](#queue-monitor--bull-board)
+- [AI scoring & hygiene engine](#ai-scoring--hygiene-engine)
 - [Database](#database)
-- [Debugging](#debugging)
 - [Available scripts](#available-scripts)
 - [Troubleshooting](#troubleshooting)
 
@@ -29,79 +40,89 @@ The system is built as an npm monorepo with an Express backend, a Next.js fronte
 
 ## What it does
 
-Deal Radar watches sales pipeline activity in near real time:
-
-1. **Ingest** — CRM systems POST deal events to a webhook endpoint.
-2. **Queue** — Events are enqueued in Redis (BullMQ) for reliable, async processing.
-3. **Process** — A background worker validates idempotency, upserts deals, saves activity history, and updates deal fields (stage, amount, close date).
-4. **Broadcast** — Successfully processed events are pushed to connected browsers via Server-Sent Events (SSE).
-5. **Display** — The frontend dashboard shows a live activity feed with pause/resume, filtering, and auto-scroll.
-
-The right-hand **Deal Panel** and top **Filters** bar are currently static UI previews. The **Activity Stream** is wired to live SSE data.
+1. **Ingest** — CRM systems POST deal events (stage changes, emails, meetings, notes, closures) to a webhook endpoint. Both camelCase and snake_case field names are accepted.
+2. **Queue** — Events are enqueued in Redis via BullMQ for reliable, async processing with exponential-backoff retries.
+3. **Process** — A background worker deduplicates events, upserts deal state, saves a full activity history, then triggers AI scoring.
+4. **Score** — The AI engine runs MEDDICC hygiene checks first. If data is missing or conflicting, the deal is marked `HYGIENE_FAIL` with specific actionable guidance. If data quality passes, OpenAI GPT-4o-mini scores the deal (0–100) with a risk level, reasoning, and recommended next step.
+5. **Broadcast** — Processed events are pushed to all connected browsers via Server-Sent Events.
+6. **Display** — The dashboard shows a live activity feed and a Deal Panel with health scores, risk badges, AI reasoning, and hygiene warnings per deal — updating automatically as events arrive.
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart TB
-  subgraph external [External]
-    CRM[CRM / Mock Generator]
-  end
-
-  subgraph frontend [Frontend — Next.js :3000]
-    UI[Activity Stream Dashboard]
-    SSEClient[SSE Client + Zustand Store]
-    UI --> SSEClient
-  end
-
-  subgraph backend [Backend — Express :4000]
-    Webhook[POST /api/webhook]
-    SSE[SSE /api/events/stream]
-    Worker[BullMQ Worker]
-    Webhook --> Queue
-    Worker --> DB
-    Worker --> SSE
-  end
-
-  subgraph infra [Infrastructure]
-    Redis[(Redis :6379)]
-    Postgres[(Postgres :5432)]
-    Queue[BullMQ Queue]
-  end
-
-  CRM -->|deal events| Webhook
-  Webhook --> Queue
-  Queue --> Redis
-  Worker --> Redis
-  Worker --> Postgres
-  SSEClient -->|EventSource| SSE
-  SSE --> UI
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        External / Mock CRM                       │
+│                    POST /api/webhook  (events)                   │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ 202 Accepted immediately
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   Backend  (Express :4000)                       │
+│                                                                  │
+│  WebhookController  →  Zod validation  →  BullMQ.add()          │
+│                                   │                              │
+│                           Redis queue                            │
+│                                   │                              │
+│                        BullMQ Worker (concurrency 1)             │
+│                          ├─ Idempotency check                    │
+│                          ├─ Deal upsert + applyEvent             │
+│                          ├─ Activity log                         │
+│                          ├─ scoreAndPersist()                    │
+│                          │    ├─ checkHygiene()  MEDDICC gates   │
+│                          │    └─ scoreDeal()     OpenAI          │
+│                          └─ SSE broadcast                        │
+│                                                                  │
+│  GET /api/deals          →  DealController  →  Prisma            │
+│  GET /health             →  DB ping                              │
+│  GET /admin/queues       →  Bull Board UI                        │
+└─────────────────────────┬────────────────────────────────────────┘
+                          │  Server-Sent Events
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                  Frontend  (Next.js :3000)                       │
+│                                                                  │
+│  EventSource → sseClient → Zustand store                        │
+│    └─ invalidates TanStack Query → re-fetches /api/deals         │
+│                                                                  │
+│  ActivityStream   live event feed (pause / resume / filter)      │
+│  DealPanel        health score ring, risk badge, AI reasoning,   │
+│                   hygiene warning cards with actionable steps     │
+│  Filters          header search + filter chips                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Event lifecycle
 
-```mermaid
-sequenceDiagram
-  participant Mock as Mock Generator
-  participant API as Backend API
-  participant Redis as Redis Queue
-  participant Worker as BullMQ Worker
-  participant DB as Postgres
-  participant SSE as SSE Stream
-  participant UI as Frontend
+```
+CRM  →  POST /api/webhook
+              │
+              ├─ Zod validates (camelCase + snake_case)
+              ├─ BullMQ.add(jobId = eventId)  ← deduplication key
+              └─ 202 Accepted
 
-  Mock->>API: POST /api/webhook
-  API->>Redis: Enqueue job (jobId = eventId)
-  API-->>Mock: 202 Accepted
+BullMQ Worker
+              ├─ hasProcessedEvent()?  →  skip (idempotent)
+              │
+              └─ Postgres $transaction
+                   ├─ ensureDeal   (upsert on first event)
+                   ├─ saveActivity
+                   ├─ applyEvent   (stage / amount / close date)
+                   ├─ storeProcessedEvent
+                   └─ scoreAndPersist
+                        ├─ checkHygiene()
+                        │    BLOCKING  →  HYGIENE_FAIL, persist actions
+                        │    WARNING   →  score anyway, persist warnings
+                        │    PASS      →  proceed to OpenAI
+                        └─ scoreDeal()  →  OpenAI  →  SCORED
 
-  Worker->>Redis: Dequeue job
-  Worker->>DB: Check idempotency (ProcessedEvent)
-  Worker->>DB: Upsert Deal + save Activity
-  Worker->>DB: Update deal stage/amount/closeDate
-  Worker->>SSE: broadcast deal-event-processed
-  SSE-->>UI: SSE event
-  UI->>UI: Store in Zustand (max 1000 events)
+              └─ broadcastProcessedEvent (SSE → all browsers)
+
+Frontend
+              ├─ SSE: deal-event-processed received
+              ├─ 1.2 s debounce
+              └─ TanStack Query invalidate → GET /api/deals → re-render
 ```
 
 ---
@@ -111,283 +132,290 @@ sequenceDiagram
 ```
 deal-radar/
 ├── apps/
-│   ├── backend/          # Express API, webhook, SSE, BullMQ worker, Prisma
-│   └── frontend/         # Next.js dashboard (Activity Stream, Deal Panel)
+│   ├── backend/                    Express API server
+│   │   ├── src/
+│   │   │   ├── config/env.ts       Zod-validated env schema
+│   │   │   ├── controllers/        deal, health, webhook
+│   │   │   ├── lib/                deal-mapper, pagination
+│   │   │   ├── middlewares/        error handler + AppError class
+│   │   │   ├── queues/             BullMQ queue, worker, queue service
+│   │   │   ├── routes/             Express routers
+│   │   │   ├── services/           deal, activity, scoring, prisma
+│   │   │   └── sse/                SSE client manager
+│   │   └── prisma/
+│   │       ├── schema.prisma       Deal, Activity, ProcessedEvent, DeadLetterEvent
+│   │       └── migrations/
+│   └── frontend/                   Next.js 15 dashboard
+│       └── src/
+│           ├── app/                page.tsx, layout.tsx, globals.css
+│           ├── components/dashboard/
+│           │   ├── ActivityStream.tsx   live event feed
+│           │   ├── DealPanel.tsx        AI health + hygiene UI
+│           │   ├── EventCard.tsx        individual event card
+│           │   └── Filters.tsx          search header
+│           ├── hooks/              useDeals, useEventStream
+│           ├── lib/                api client, SSE client, formatters
+│           ├── providers/          TanStack Query provider
+│           └── store/              Zustand event stream store
 ├── packages/
-│   ├── shared-types/   # Shared TypeScript types (Deal, SSE payloads)
-│   ├── validation-engine/  # Zod schemas (placeholder / future use)
-│   └── ai-engine/        # AI processing stub (placeholder / future use)
+│   ├── shared-types/               TypeScript types shared across all apps
+│   ├── ai-engine/                  MEDDICC hygiene engine + OpenAI scoring
+│   └── validation-engine/          Zod schemas (reserved)
 ├── scripts/
-│   └── mock-generator.ts # Sends fake CRM events to the webhook
-├── docker-compose.yml    # Postgres, Redis, and optional backend container
-├── .env.example          # Environment variable template
-└── package.json          # Root workspace scripts
+│   └── mock-generator.ts           CRM event simulator
+├── docker-compose.yml              Postgres + Redis + optional backend
+├── .env.example                    Environment variable template
+└── package.json                    npm workspaces root
 ```
-
----
-
-## What each part does
-
-### Backend (`apps/backend`)
-
-| Component | Path | Responsibility |
-|---|---|---|
-| **Webhook** | `src/controllers/webhook.controller.ts` | Validates incoming deal events (snake_case or camelCase), enqueues to BullMQ |
-| **Worker** | `src/queues/worker.ts` | Processes jobs: deduplication, deal upsert, activity logging, SSE broadcast |
-| **SSE stream** | `src/sse/event-stream.ts` | Manages connected clients, heartbeats every 30s, broadcasts processed events |
-| **Deal service** | `src/services/deal.service.ts` | Creates/updates deals from event payloads, serves deal queries |
-| **Deal controller** | `src/controllers/deal.controller.ts` | Paginated deal list and deal detail endpoints |
-| **Activity service** | `src/services/activity.service.ts` | Persists activity records and tracks processed event IDs |
-| **Prisma** | `prisma/schema.prisma` | Postgres models: `Deal`, `Activity`, `ProcessedEvent`, `DeadLetterEvent` |
-
-**API routes:**
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/health` | Health check |
-| `GET` | `/api/deals` | Paginated deal list with state, health, and activities |
-| `GET` | `/api/deals/:dealId` | Single deal with state, health, and paginated activities |
-| `POST` | `/api/webhook` | Ingest CRM deal events |
-| `GET` | `/api/events/stream` | SSE live event stream |
-
-### Frontend (`apps/frontend`)
-
-| Component | Path | Responsibility |
-|---|---|---|
-| **Activity Stream** | `src/components/dashboard/ActivityStream.tsx` | Live feed UI with pause, resume, filter, auto-scroll |
-| **SSE client** | `src/lib/sse-client.ts` | `EventSource` connection to backend stream |
-| **Zustand store** | `src/store/event-stream.ts` | Stores up to 1000 events, connection state, filters |
-| **useEventStream** | `src/hooks/useEventStream.ts` | React hook that manages connect/disconnect lifecycle |
-| **Deal Panel** | `src/components/dashboard/DealPanel.tsx` | Static pipeline health preview (not yet live) |
-| **Filters** | `src/components/dashboard/Filters.tsx` | Static search/filter UI (not yet live) |
-
-### Shared packages
-
-| Package | Purpose |
-|---|---|
-| `@deal-radar/shared-types` | `Deal` interface, SSE event types, `DealEventType` union |
-| `@deal-radar/validation-engine` | Zod `DealSchema` — reserved for future validation flows |
-| `@deal-radar/ai-engine` | `processDealWithAI` stub — reserved for future AI scoring |
-
-### Mock generator (`scripts/mock-generator.ts`)
-
-Simulates a CRM pushing events to the webhook. Randomly generates scenarios:
-
-| Scenario | Description |
-|---|---|
-| `normal_event` | Standard random deal event |
-| `duplicate_event` | Replays the previous event (tests idempotency) |
-| `missing_activity_history` | Event for a deal with no prior history |
-| `source_of_truth_conflict` | Conflicting stage/amount from multiple sources |
-| `out_of_order_event` | Event with an older `occurred_at` timestamp |
-
-### Infrastructure
-
-| Service | Role |
-|---|---|
-| **Postgres** | Persistent storage for deals, activities, processed events |
-| **Redis** | BullMQ job queue backing store |
 
 ---
 
 ## Prerequisites
 
-- **Node.js 20+**
-- **npm** (workspaces enabled at root)
-- **Docker** (recommended for Postgres and Redis)
+| Requirement | Version | Notes |
+|---|---|---|
+| **Node.js** | 20 or higher | Check: `node -v` |
+| **npm** | 9 or higher | Comes with Node; check: `npm -v` |
+| **Docker Desktop** | Any recent | For Postgres + Redis |
+| **OpenAI API key** | — | Required for AI scoring; get one at platform.openai.com |
 
-Optional:
+You do **not** need to install Postgres or Redis manually — Docker handles both.
 
-- `curl` or Postman for API testing
-- `tsx` (installed via root `devDependencies` for the mock script)
+---
+
+## Quick start — run on any machine
+
+These steps work on macOS, Linux, and Windows (WSL2). Follow them in order.
+
+### Step 1 — Clone the repo
+
+```bash
+git clone <repo-url>
+cd deal-radar
+```
+
+### Step 2 — Install dependencies
+
+```bash
+npm install
+```
+
+### Step 3 — Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and fill in the two required values:
+
+```env
+# Use localhost for everything when running backend on your machine
+DATABASE_URL=postgresql://deal_radar:deal_radar_password@localhost:5432/deal_radar?schema=public
+REDIS_HOST=localhost
+
+# Your OpenAI key — required for AI scoring
+OPENAI_API_KEY=sk-...
+```
+
+The other variables already have working defaults. Leave them unless you need to change ports.
+
+### Step 4 — Start infrastructure (Postgres + Redis)
+
+```bash
+docker compose up -d postgres redis
+```
+
+Wait ~5 seconds for both containers to become healthy:
+
+```bash
+docker compose ps
+# both should show "(healthy)"
+```
+
+### Step 5 — Set up the database
+
+```bash
+npm run prisma:generate -w @deal-radar/backend
+npm run prisma:migrate -w @deal-radar/backend
+```
+
+You should see: `Your database is now in sync with your schema.`
+
+### Step 6 — Start the backend
+
+Open a new terminal tab:
+
+```bash
+npm run dev -w @deal-radar/backend
+```
+
+You should see:
+```
+[server] Listening on port 4000 (development)
+[server] Health    → http://localhost:4000/health
+[server] Bull Board → http://localhost:4000/admin/queues
+[worker:deal-events] Worker ready
+```
+
+Verify it's up:
+```bash
+curl http://localhost:4000/health
+# {"status":"ok","timestamp":"...","services":{"database":"ok"}}
+```
+
+### Step 7 — Start the frontend
+
+Open another terminal tab:
+
+```bash
+npm run dev -w @deal-radar/frontend
+```
+
+Open **http://localhost:3000** in your browser. You'll see the Deal Radar dashboard.
+
+### Step 8 — Send mock events
+
+Open a third terminal tab:
+
+```bash
+npm run mock
+```
+
+Events start flowing every 2 seconds. The Activity Stream fills up live, and deals appear in the Deal Panel. Deals will show hygiene warnings until MEDDICC fields are populated (this is by design — see the tutorial section).
+
+---
+
+That's it. Four terminals, everything live.
+
+| Service | URL |
+|---|---|
+| Dashboard | http://localhost:3000 |
+| Backend API | http://localhost:4000 |
+| Health check | http://localhost:4000/health |
+| Queue monitor | http://localhost:4000/admin/queues |
+| SSE stream | http://localhost:4000/api/events/stream |
+| Webhook | POST http://localhost:4000/api/webhook |
 
 ---
 
 ## Environment variables
 
-Copy the example file and adjust for your setup:
+### `apps/backend/.env` (backend only)
 
-```bash
-cp .env.example .env
-```
+The backend reads its own `.env` file at startup via `dotenv/config`.
 
-| Variable | Default | Description |
-|---|---|---|
-| `NODE_ENV` | `development` | Runtime environment |
-| `PORT` | `4000` | Backend listen port |
-| `BACKEND_PORT` | `4000` | Host port mapped in Docker Compose |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | Backend URL used by the frontend SSE client |
-| `DATABASE_URL` | *(see `.env.example`)* | Postgres connection string |
-| `REDIS_HOST` | `redis` (Docker) / `localhost` (local) | Redis hostname |
-| `REDIS_PORT` | `6379` | Redis port |
-| `POSTGRES_*` | *(see `.env.example`)* | Postgres credentials for Docker Compose |
-| `MOCK_WEBHOOK_URL` | `http://localhost:4000/api/webhook` | Override webhook target for mock generator |
-| `MOCK_INTERVAL_MS` | `2000` | Milliseconds between mock events |
-| `CHOKIDAR_USEPOLLING` | `true` | File watching inside Docker |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_URL` | **Yes** | — | Full Postgres connection string |
+| `REDIS_HOST` | No | `localhost` | Redis hostname |
+| `REDIS_PORT` | No | `6379` | Redis port |
+| `PORT` | No | `4000` | HTTP server port |
+| `NODE_ENV` | No | `development` | `development` · `production` · `test` |
+| `OPENAI_API_KEY` | Recommended | — | Needed for AI scoring; deals stuck at `HYGIENE_FAIL` without it |
+| `OPENAI_MODEL` | No | `gpt-4o-mini` | Override the scoring model |
 
-### Local development `.env` tips
+### `.env` (root — read by the frontend and mock generator)
 
-When running the **backend on your machine** (not inside Docker), use `localhost` for data stores:
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_URL` | No | `http://localhost:4000` | Backend base URL for the browser |
+| `MOCK_WEBHOOK_URL` | No | `http://localhost:4000/api/webhook` | Override mock generator target |
+| `MOCK_INTERVAL_MS` | No | `2000` | Milliseconds between mock events |
+
+### When running backend inside Docker Compose
+
+When `backend` runs as a Docker service, it must use the Docker service name for internal networking:
 
 ```env
-DATABASE_URL=postgresql://deal_radar:deal_radar_password@localhost:5432/deal_radar?schema=public
-REDIS_HOST=localhost
-REDIS_PORT=6379
-NEXT_PUBLIC_API_URL=http://localhost:4000
-PORT=4000
-```
-
-When running the **backend inside Docker Compose**, keep `DATABASE_URL` pointing at the `postgres` service hostname (as in `.env.example`).
-
-> Restart the frontend after changing `NEXT_PUBLIC_API_URL` — Next.js reads public env vars at build/start time.
-
----
-
-## Quick start
-
-From the repository root:
-
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Configure environment
-cp .env.example .env
-# Edit .env if needed (see above)
-
-# 3. Start Postgres + Redis
-docker compose up -d postgres redis
-
-# 4. Prepare database
-npm run prisma:generate -w @deal-radar/backend
-npm run prisma:migrate -w @deal-radar/backend
-
-# 5. Start backend (terminal 1)
-npm run dev -w @deal-radar/backend
-
-# 6. Start frontend (terminal 2)
-npm run dev -w @deal-radar/frontend
-
-# 7. Start mock events (terminal 3)
-npm run mock
-```
-
-Open **http://localhost:3000** — you should see live events in the Activity Stream.
-
-Verify the backend:
-
-```bash
-curl http://localhost:4000/health
-# {"status":"ok"}
+DATABASE_URL=postgresql://deal_radar:deal_radar_password@postgres:5432/deal_radar?schema=public
+REDIS_HOST=redis
 ```
 
 ---
 
 ## Running the application
 
-### Option A — Recommended local dev (hybrid)
+### Recommended — hybrid (infra in Docker, apps on host)
 
-Use Docker for infrastructure, run app processes locally for fast iteration.
+Best for development. Hot reload works, logs are easy to read.
 
-**Terminal 1 — Infrastructure (once)**
-
-```bash
-docker compose up -d postgres redis
+```
+Terminal 1:  docker compose up -d postgres redis
+Terminal 2:  npm run dev -w @deal-radar/backend
+Terminal 3:  npm run dev -w @deal-radar/frontend
+Terminal 4:  npm run mock
 ```
 
-**Terminal 2 — Backend**
+### All in Docker Compose
+
+Backend, Postgres, and Redis all in containers. Frontend still runs locally (no Docker image defined for it).
 
 ```bash
-npm run dev -w @deal-radar/backend
-```
+# Start everything in Docker
+docker compose up -d postgres redis backend
 
-**Terminal 3 — Frontend**
-
-```bash
+# Start frontend locally
 npm run dev -w @deal-radar/frontend
-```
 
-**Terminal 4 — Mock data**
-
-```bash
+# Send mock events
 npm run mock
 ```
 
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:3000 |
-| Backend API | http://localhost:4000 |
-| Health check | http://localhost:4000/health |
-| SSE stream | http://localhost:4000/api/events/stream |
-| Webhook | http://localhost:4000/api/webhook |
-
-### Option B — Backend in Docker
-
-Docker Compose can run Postgres, Redis, and the backend together. The frontend still runs locally.
-
-```bash
-docker compose up -d postgres redis
-npm run prisma:migrate -w @deal-radar/backend   # run from host first
-docker compose up backend
-npm run dev -w @deal-radar/frontend
-npm run mock
-```
-
-> Docker Compose runs `prisma generate` on backend startup but does **not** run migrations. Always migrate before processing events.
-
-### Option C — Run all workspaces
-
-Starts every workspace `dev` script (backend, frontend, and packages):
-
-```bash
-npm run dev
-```
-
-This is convenient but noisier. Separate terminals are easier when debugging.
+> The Docker backend image runs `npm install` and `prisma generate` automatically on startup. It does **not** run migrations — run those from your host first: `npm run prisma:migrate -w @deal-radar/backend`
 
 ### Production build
 
 ```bash
-npm run build
-npm run start -w @deal-radar/backend
-npm run start -w @deal-radar/frontend
+npm run build                             # build all workspaces
+npm run start -w @deal-radar/backend      # start compiled backend
+npm run start -w @deal-radar/frontend     # start Next.js production server
 ```
 
 ---
 
 ## Mock event generator
 
-The mock script simulates CRM webhook traffic.
-
-### Basic usage
+Simulates a CRM sending deal events. Runs from the repository root.
 
 ```bash
 npm run mock
 ```
 
-Posts a random event to `http://localhost:4000/api/webhook` every 2 seconds.
-
 ### Options
 
 ```bash
-# Preview payloads without sending
-npm run mock -- --dry-run
-
-# Send a fixed number of events then exit
+# Send exactly 10 events then stop
 npm run mock -- --count=10
 
-# Custom interval (5 seconds)
+# Preview payloads without hitting the API
+npm run mock -- --dry-run
+
+# Custom interval (5 seconds between events)
 MOCK_INTERVAL_MS=5000 npm run mock
 
-# Custom webhook URL
-MOCK_WEBHOOK_URL=http://localhost:4000/api/webhook npm run mock
+# Point at a different backend
+MOCK_WEBHOOK_URL=http://my-server:4000/api/webhook npm run mock
 ```
+
+### Scenarios generated
+
+| Scenario | Description |
+|---|---|
+| `normal_event` | Random event for a known deal |
+| `duplicate_event` | Replays the previous event — tests idempotency |
+| `missing_activity_history` | Event for a brand-new deal with no history |
+| `source_of_truth_conflict` | Conflicting stage/amount data |
+| `out_of_order_event` | Event with an older `occurred_at` timestamp |
 
 ### Supported event types
 
-`stage_changed` · `email_sent` · `meeting_booked` · `note_added`
-
-The backend also accepts `deal_closed` (not yet generated by the mock script).
+| Type | Effect |
+|---|---|
+| `stage_changed` | Updates deal stage, amount, close date |
+| `email_sent` | Logged as activity only |
+| `meeting_booked` | Logged as activity only |
+| `note_added` | Logged as activity only |
+| `deal_closed` | Sets stage to `CLOSED` (manual webhook only) |
 
 ### Manual webhook test
 
@@ -395,21 +423,20 @@ The backend also accepts `deal_closed` (not yet generated by the mock script).
 curl -X POST http://localhost:4000/api/webhook \
   -H "Content-Type: application/json" \
   -d '{
-    "event_id": "evt-manual-001",
+    "event_id": "evt-demo-001",
     "deal_id": "deal-acme-001",
     "event_type": "stage_changed",
-    "occurred_at": "2026-06-06T12:00:00.000Z",
+    "occurred_at": "2026-06-07T10:00:00.000Z",
     "payload": {
       "stage": "PROPOSAL",
       "amount": 120000,
-      "close_date": "2026-07-01T00:00:00.000Z"
+      "close_date": "2027-03-01T00:00:00.000Z"
     }
   }'
+# → 202 {"accepted":true}
 ```
 
-Expected response: `202` with `{"accepted":true}`.
-
-The API accepts both **snake_case** (`event_id`, `deal_id`) and **camelCase** (`eventId`, `dealId`) field names.
+Both **snake_case** (`event_id`, `deal_id`) and **camelCase** (`eventId`, `dealId`) field names are accepted.
 
 ---
 
@@ -417,209 +444,186 @@ The API accepts both **snake_case** (`event_id`, `deal_id`) and **camelCase** (`
 
 ### `GET /health`
 
-Returns server status.
+Returns server and database connectivity status.
 
 ```json
-{ "status": "ok" }
+{
+  "status": "ok",
+  "timestamp": "2026-06-07T10:00:00.000Z",
+  "services": { "database": "ok" }
+}
 ```
+
+Returns `503` with `"status": "degraded"` if Postgres is unreachable.
+
+---
 
 ### `GET /api/deals`
 
-Returns a paginated list of deals with current state, health fields, and recent activities.
-
-**Query parameters:**
+Paginated list of deals with state, AI health, hygiene info, and recent activities.
 
 | Param | Default | Max | Description |
 |---|---|---|---|
 | `page` | `1` | — | Page number (1-based) |
 | `limit` | `20` | `100` | Deals per page |
-| `activityLimit` | `10` | `50` | Recent activities included per deal (`0` for none) |
-
-**Example:**
+| `activityLimit` | `10` | `50` | Recent activities per deal (`0` = none) |
 
 ```bash
-curl "http://localhost:4000/api/deals?page=1&limit=20&activityLimit=10"
+curl "http://localhost:4000/api/deals?page=1&limit=5&activityLimit=3"
 ```
 
-**Response:**
-
+Response shape:
 ```json
 {
-  "data": [
-    {
-      "id": "uuid",
-      "dealId": "deal-acme-001",
-      "state": {
-        "stage": "PROPOSAL",
-        "amount": "120000",
-        "closeDate": "2026-07-01T00:00:00.000Z"
-      },
-      "health": {
-        "healthScore": null,
-        "riskLevel": null,
-        "validationStatus": "PENDING",
-        "aiReasoning": null
-      },
-      "activities": [
-        {
-          "id": "uuid",
-          "eventId": "evt-001",
-          "eventType": "stage_changed",
-          "payload": {},
-          "occurredAt": "2026-06-06T12:00:00.000Z",
-          "createdAt": "2026-06-06T12:00:01.000Z"
-        }
-      ],
-      "activityCount": 15,
-      "createdAt": "2026-06-06T10:00:00.000Z",
-      "updatedAt": "2026-06-06T12:00:01.000Z"
-    }
-  ],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 4,
-    "totalPages": 1,
-    "hasMore": false
-  }
-}
-```
-
-### `GET /api/deals/:dealId`
-
-Returns a single deal with current state, health fields, and paginated activities.
-
-**Query parameters:**
-
-| Param | Default | Max | Description |
-|---|---|---|---|
-| `page` | `1` | — | Activity page number (1-based) |
-| `limit` | `20` | `100` | Activities per page |
-
-**Example:**
-
-```bash
-curl "http://localhost:4000/api/deals/deal-acme-001?page=1&limit=20"
-```
-
-**Response:**
-
-```json
-{
-  "data": {
+  "data": [{
     "id": "uuid",
     "dealId": "deal-acme-001",
     "state": {
       "stage": "PROPOSAL",
       "amount": "120000",
-      "closeDate": "2026-07-01T00:00:00.000Z"
+      "closeDate": "2027-03-01T00:00:00.000Z"
     },
     "health": {
-      "healthScore": null,
-      "riskLevel": null,
-      "validationStatus": "PENDING",
-      "aiReasoning": null
+      "healthScore": 0.74,
+      "riskLevel": "MEDIUM",
+      "validationStatus": "SCORED",
+      "aiReasoning": "Strong pain identification and champion confirmed...",
+      "recommendedAction": "Schedule Economic Buyer introduction before next QBR.",
+      "hygiene": {
+        "cannotScore": false,
+        "hygieneStatus": "PASS",
+        "missingFields": [],
+        "hygieneActions": [],
+        "lastHygieneAt": "2026-06-07T10:00:01.000Z"
+      }
     },
-    "activities": [],
-    "createdAt": "2026-06-06T10:00:00.000Z",
-    "updatedAt": "2026-06-06T12:00:01.000Z"
-  },
+    "activities": [...],
+    "activityCount": 8,
+    "createdAt": "...",
+    "updatedAt": "..."
+  }],
   "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 15,
-    "totalPages": 1,
-    "hasMore": false
+    "page": 1, "limit": 5, "total": 4, "totalPages": 1, "hasMore": false
   }
 }
 ```
 
-**Responses:**
+`validationStatus` values: `PENDING` · `SCORED` · `HYGIENE_FAIL`
+`hygieneStatus` values: `UNCHECKED` · `PASS` · `WARN` · `FAIL`
 
-| Status | Meaning |
-|---|---|
-| `200` | Deal found |
-| `400` | Invalid pagination parameters |
-| `404` | Deal not found |
+---
+
+### `GET /api/deals/:dealId`
+
+Single deal with full MEDDICC fields and paginated activities.
+
+```bash
+curl "http://localhost:4000/api/deals/deal-acme-001"
+```
+
+Returns `404` if the deal doesn't exist.
+
+---
 
 ### `POST /api/webhook`
 
-Accepts a deal event and enqueues it for processing.
+Ingest a deal event. Returns `202` immediately; processing is async.
 
-**Required fields** (either naming style):
+**Required fields** (camelCase or snake_case):
 
 | Field | Type | Description |
 |---|---|---|
-| `eventId` / `event_id` | string | Unique event identifier (used as BullMQ job ID) |
+| `eventId` / `event_id` | string | Unique ID — used as BullMQ job ID for deduplication |
 | `dealId` / `deal_id` | string | Deal identifier |
-| `eventType` / `event_type` | enum | `stage_changed`, `email_sent`, `meeting_booked`, `note_added`, `deal_closed` |
-| `payload` | object | Event-specific data |
+| `eventType` / `event_type` | enum | `stage_changed` · `email_sent` · `meeting_booked` · `note_added` · `deal_closed` |
+| `payload` | object | Event data (stage, amount, close_date, notes, etc.) |
 
 **Optional:**
 
 | Field | Type | Description |
 |---|---|---|
-| `occurredAt` / `occurred_at` | ISO datetime | When the event happened in the source system |
+| `occurredAt` / `occurred_at` | ISO 8601 datetime | Source-system timestamp |
 
-**Responses:**
+Responses: `202 { "accepted": true }` · `400` validation error · `500` server error
 
-| Status | Meaning |
-|---|---|
-| `202` | Event accepted and enqueued |
-| `400` | Invalid payload (validation error details included) |
-| `500` | Server error |
+---
 
 ### `GET /api/events/stream`
 
-Server-Sent Events endpoint. Connect with `EventSource` or `curl`:
+Server-Sent Events stream. The frontend connects automatically.
 
 ```bash
 curl -N http://localhost:4000/api/events/stream
 ```
 
-**SSE event types:**
-
-| Event | Payload | Description |
+| Event | Payload | Frequency |
 |---|---|---|
-| `connected` | `{ clientId, activeClients }` | Sent when client connects |
-| `heartbeat` | `{ timestamp }` | Sent every 30 seconds |
-| `deal-event-processed` | `{ eventId, dealId, eventType, processedAt }` | Sent after successful worker processing |
+| `connected` | `{ clientId, activeClients }` | Once on connect |
+| `heartbeat` | `{ timestamp }` | Every 30 s |
+| `deal-event-processed` | `{ eventId, dealId, eventType, processedAt }` | After each processed job |
 
 ---
 
-## Live activity stream (SSE)
+## Queue monitor — Bull Board
 
-The frontend connects automatically when the dashboard loads.
+Visit **http://localhost:4000/admin/queues** while the backend is running.
 
-### Features
+The dashboard shows:
+- **Active / Waiting / Delayed / Paused** job counts in real time
+- **Completed** tab — last 100 successfully processed jobs with payloads and timing
+- **Failed** tab — last 500 failed jobs with full stack traces; click **Retry** to reprocess
+- **Per-job detail** — input data, attempt count, processing duration, error message
+- **Queue actions** — pause, resume, clean, empty the queue
+- **Redis stats** — memory usage and connection health
 
-| Feature | Description |
+Jobs are retried up to 3 times with 5 s exponential backoff before landing in Failed.
+
+---
+
+## AI scoring & hygiene engine
+
+### How scoring works
+
+Every time a deal event is processed, the AI engine runs two steps:
+
+**1. Hygiene check** (`packages/ai-engine/src/hygiene.ts`)
+
+Validates the deal has enough data quality to score. Checks are stage-aware:
+
+| Check | When blocking |
 |---|---|
-| **Pause** | Closes the SSE connection; buffered events are kept |
-| **Resume** | Reconnects to the stream |
-| **Filter by event type** | Show all events or a single type (`stage_changed`, `email_sent`, etc.) |
-| **Auto-scroll** | Scrolls to the newest event when new data arrives |
-| **1000 event cap** | Only the most recent 1000 events are kept in memory |
+| `stage` | Always — must not be missing or UNKNOWN |
+| `amount` | Always — must be > 0 |
+| `closeDate` | Always — must exist, be valid, and be in the future for non-CLOSED deals |
+| `activities` | Always — must have at least one logged interaction |
+| `meddicc.identifyPain` | Always — core qualification field |
+| `meddicc.metrics` | Always — core qualification field |
+| `meddicc.champion` | Always — critical people field |
+| `meddicc.economicBuyer` | Late stages (Proposal, Negotiation, Closing) |
+| `meddicc.decisionCriteria` | Late stages only |
+| `meddicc.decisionProcess` | Late stages only |
+| Source of truth conflict | When stage or amount differ >20% across CRM sources |
+| Activity staleness | Stage-dependent: Negotiation = 7 days, Proposal = 14 days, etc. |
 
-### Key files
+If any BLOCKING issue is found: `validationStatus = HYGIENE_FAIL`, full actionable guidance persisted.
+If only WARNINGs: scoring proceeds, warnings attached to the result.
 
-```
-apps/frontend/src/
-├── lib/sse-client.ts           # EventSource singleton
-├── store/event-stream.ts       # Zustand store
-├── hooks/useEventStream.ts     # Connection lifecycle hook
-└── components/dashboard/
-    └── ActivityStream.tsx      # UI
-```
+**2. OpenAI scoring** (`packages/ai-engine/src/index.ts`)
 
-### Connection status badge
+Sends a structured MEDDICC prompt to `gpt-4o-mini` at temperature 0.2. Returns:
+- `score` — 0.0 to 1.0 (displayed as 0–100)
+- `riskLevel` — `LOW` · `MEDIUM` · `HIGH`
+- `reasoning` — paragraph explaining the score using MEDDICC dimensions
+- `recommendedAction` — single most important next step for the rep
 
-| Status | Meaning |
+### What deals show on the dashboard
+
+| `validationStatus` | What you see in the Deal Panel |
 |---|---|
-| `connecting` | Opening SSE connection |
-| `connected` | Receiving events |
-| `paused` | User paused the stream |
-| `disconnected` | Connection lost or backend unavailable |
+| `PENDING` | Score ring shows `—`, no risk badge |
+| `HYGIENE_FAIL` | "Cannot Score" card, missing field chips, expandable action items |
+| `SCORED` with warnings | Score ring, risk badge, AI reasoning, amber warning section below |
+| `SCORED` clean | Score ring, risk badge, AI reasoning, recommended next step |
 
 ---
 
@@ -629,210 +633,109 @@ apps/frontend/src/
 
 | Model | Purpose |
 |---|---|
-| `Deal` | Current deal state (stage, amount, close date, health fields) |
-| `Activity` | Immutable log of every processed event |
-| `ProcessedEvent` | Idempotency ledger — prevents duplicate processing |
-| `DeadLetterEvent` | Reserved for failed events (schema present, not yet wired) |
+| `Deal` | Current state + AI health + MEDDICC fields |
+| `Activity` | Immutable event log per deal |
+| `ProcessedEvent` | Idempotency ledger (one row per eventId) |
+| `DeadLetterEvent` | Reserved for failed-event archiving |
 
 ### Migrations
 
 ```bash
-# Generate Prisma client after schema changes
+# After any schema.prisma change:
 npm run prisma:generate -w @deal-radar/backend
-
-# Apply migrations (development)
 npm run prisma:migrate -w @deal-radar/backend
 ```
 
-### Inspect data
+### Inspect data directly
 
 ```bash
-# Connect to Postgres inside Docker
+# Open a Postgres shell in Docker
 docker exec -it deal-radar-postgres psql -U deal_radar -d deal_radar
 
-# Example queries
-SELECT "dealId", stage, amount FROM "Deal";
-SELECT "eventId", "dealId", "eventType" FROM "Activity" ORDER BY "createdAt" DESC LIMIT 10;
+# Useful queries
+SELECT "dealId", stage, "validationStatus", "hygieneStatus", "healthScore" FROM "Deal";
+SELECT "eventId", "dealId", "eventType", "occurredAt" FROM "Activity" ORDER BY "createdAt" DESC LIMIT 20;
+SELECT COUNT(*) FROM "ProcessedEvent";
 ```
-
----
-
-## Debugging
-
-### 1. Confirm services are running
-
-```bash
-docker compose ps
-curl http://localhost:4000/health
-```
-
-### 2. Watch backend logs
-
-The backend logs key steps with prefixed tags:
-
-| Log prefix | What to look for |
-|---|---|
-| `[webhook]` | Incoming events and enqueue status |
-| `[queue:deal-events]` | Queue registration and errors |
-| `[worker:deal-events]` | Job processing, duplicates, failures |
-| `[sse]` | Client connect/disconnect |
-
-```bash
-npm run dev -w @deal-radar/backend
-```
-
-### 3. Test the webhook in isolation
-
-```bash
-npm run mock -- --count=1
-```
-
-Check backend terminal for:
-
-```
-[webhook] Deal event enqueued
-[worker:deal-events] Event processed
-[sse] Client connected
-```
-
-### 4. Test SSE directly
-
-```bash
-curl -N http://localhost:4000/api/events/stream
-```
-
-In another terminal, send an event:
-
-```bash
-npm run mock -- --count=1
-```
-
-You should see `event: deal-event-processed` in the curl output.
-
-### 5. Check Redis queue
-
-```bash
-docker exec -it deal-radar-redis redis-cli
-
-# List BullMQ keys
-KEYS bull:deal-events:*
-```
-
-### 6. Frontend debugging
-
-- Open browser DevTools → **Network** → filter by `stream` or `events`
-- The SSE request should stay open with status `200`
-- Check the **Console** for `[sse]` parse errors
-- Verify `NEXT_PUBLIC_API_URL` in `.env` matches the running backend
-
-### 7. Dry-run mock payloads
-
-```bash
-npm run mock -- --dry-run --count=3
-```
-
-Inspect generated JSON without hitting the API.
-
-### 8. Duplicate event handling
-
-The mock `duplicate_event` scenario replays the last event. The worker should log:
-
-```
-[worker:deal-events] Skipping duplicate event
-```
-
-No second `deal-event-processed` SSE event should appear for the same `eventId`.
 
 ---
 
 ## Available scripts
 
-Run from the **repository root**:
+Run from the **repository root** unless noted:
+
+### Top-level
 
 | Script | Description |
 |---|---|
 | `npm install` | Install all workspace dependencies |
-| `npm run dev` | Start all workspace dev processes |
+| `npm run dev` | Start all workspace dev processes together |
 | `npm run build` | Build all workspaces |
-| `npm run start` | Start all workspaces in production mode |
-| `npm run lint` | Lint all workspaces |
 | `npm run mock` | Run the CRM mock event generator |
 
-### Workspace-specific
+### Backend (`-w @deal-radar/backend`)
 
 | Script | Description |
 |---|---|
-| `npm run dev -w @deal-radar/backend` | Start backend with hot reload (`tsx watch`) |
+| `npm run dev -w @deal-radar/backend` | Start with hot reload (`tsx watch`) |
+| `npm run build -w @deal-radar/backend` | Compile TypeScript to `dist/` |
+| `npm run start -w @deal-radar/backend` | Run compiled production build |
+| `npm run prisma:generate -w @deal-radar/backend` | Regenerate Prisma client |
+| `npm run prisma:migrate -w @deal-radar/backend` | Apply pending migrations |
+
+### Frontend (`-w @deal-radar/frontend`)
+
+| Script | Description |
+|---|---|
 | `npm run dev -w @deal-radar/frontend` | Start Next.js dev server |
-| `npm run build -w @deal-radar/backend` | Compile backend TypeScript |
 | `npm run build -w @deal-radar/frontend` | Build Next.js for production |
-| `npm run prisma:generate -w @deal-radar/backend` | Generate Prisma client |
-| `npm run prisma:migrate -w @deal-radar/backend` | Run database migrations |
+| `npm run start -w @deal-radar/frontend` | Serve production build |
 
 ### Docker Compose
 
 | Command | Description |
 |---|---|
-| `docker compose up -d postgres redis` | Start Postgres and Redis in background |
-| `docker compose up backend` | Start backend container (with deps) |
+| `docker compose up -d postgres redis` | Start Postgres + Redis in background |
+| `docker compose up -d backend` | Start backend container too |
+| `docker compose ps` | Check container status and health |
+| `docker compose logs -f backend` | Follow backend container logs |
 | `docker compose down` | Stop all containers |
-| `docker compose down -v` | Stop containers and delete volumes (wipes DB data) |
+| `docker compose down -v` | Stop and delete volumes (wipes all data) |
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
-| No events in Activity Stream | Mock or backend not running | Start backend + `npm run mock`; check backend logs |
-| SSE shows `disconnected` | Backend down or wrong URL | Verify `curl http://localhost:4000/health` and `NEXT_PUBLIC_API_URL` |
-| `Redis connection` errors | Redis not running | `docker compose up -d redis`; set `REDIS_HOST=localhost` for local backend |
-| Prisma / Postgres errors | DB not migrated | Run `prisma:migrate`; check `DATABASE_URL` uses `localhost` for local backend |
-| `202` but no SSE event | Worker failed silently | Check `[worker:deal-events]` logs for errors |
-| Duplicate events not showing | Working as designed | Idempotency skips re-processing; only first event broadcasts |
-| Frontend env changes ignored | Next.js caches public env | Restart `npm run dev -w @deal-radar/frontend` |
-| Port 4000 already in use | Another process bound | `lsof -i :4000` and stop the conflicting process |
-| Port 3000 already in use | Another Next.js instance | `npx next dev -p 3001` or stop the other process |
-| Docker backend can't reach DB | Migration not applied | Run migrations from host before starting backend container |
-| CORS errors | Backend CORS misconfigured | Backend uses `cors()` with defaults — ensure API URL is correct |
+| `❌ DATABASE_URL is required` | `.env` not loaded or `DATABASE_URL` missing | Check `apps/backend/.env` has `DATABASE_URL=...` |
+| `❌ DATABASE_URL: Invalid input` | Same — env not found at startup | Ensure `apps/backend/.env` exists and is not empty |
+| Backend won't start — Redis error | Redis not running | `docker compose up -d redis` |
+| Backend won't start — DB error | Postgres not running | `docker compose up -d postgres` |
+| Deals don't appear in dashboard | DB not migrated | Run `npm run prisma:migrate -w @deal-radar/backend` |
+| Deals all show `HYGIENE_FAIL` | MEDDICC fields empty (expected) | This is correct — the mock generator doesn't populate MEDDICC. Update fields via SQL or the PATCH endpoint. |
+| Deals show `HYGIENE_FAIL` — no score | Missing `OPENAI_API_KEY` | Add your OpenAI key to `apps/backend/.env` |
+| Activity stream shows `disconnected` | Backend not running or wrong URL | Check `NEXT_PUBLIC_API_URL` in `.env` matches backend port |
+| No events in Activity Stream | Mock generator not running | Run `npm run mock` in a separate terminal |
+| `202` returned but no SSE event | Worker error | Check backend terminal for `[worker:deal-events]` error logs |
+| Duplicate events not broadcasting | Working as designed | Idempotency is intentional — same `eventId` is a no-op |
+| Frontend env changes not picked up | Next.js caches public env at startup | Restart `npm run dev -w @deal-radar/frontend` |
+| Port 4000 in use | Another process | `lsof -i :4000` then kill it, or set `PORT=4001` in `apps/backend/.env` |
+| Port 3000 in use | Another Next.js | Stop it, or run `npm run dev -w @deal-radar/frontend -- -p 3001` |
 
-### Reset everything
+### Fully reset and start clean
 
 ```bash
-docker compose down -v
+docker compose down -v          # stop containers, wipe DB and Redis data
 docker compose up -d postgres redis
-docker compose up backend
-
-curl http://localhost:4000/health
-
 npm run prisma:migrate -w @deal-radar/backend
+npm run dev -w @deal-radar/backend
+npm run dev -w @deal-radar/frontend
+npm run mock
 ```
-
-Then restart backend, frontend, and mock.
-
----
-
-## Supported deal event types
-
-| Type | Effect on deal |
-|---|---|
-| `stage_changed` | Updates `stage` from payload (`stage`, `new_stage`, etc.) |
-| `email_sent` | Logged as activity; no stage change |
-| `meeting_booked` | Logged as activity; no stage change |
-| `note_added` | Logged as activity; no stage change |
-| `deal_closed` | Sets stage to `CLOSED` |
-
-Payload fields commonly used for deal updates: `amount`, `close_date`, `stage`, `new_stage`.
 
 ---
 
 ## License
 
-Private — POC project.
-
-## Screenshots
-<img width="1352" height="804" alt="Screenshot 2026-06-06 at 9 06 32 PM" src="https://github.com/user-attachments/assets/6fe29dcd-b6b2-489d-b194-988051213156" /><img width="1352" height="805" alt="Screenshot 2026-06-06 at 9 07 20 PM" src="https://github.com/user-attachments/assets/c5b4c493-ea2b-4bae-a579-ee6b805fc4cf" />
-<img width="1352" height="803" alt="Screenshot 2026-06-06 at 9 07 11 PM" src="https://github.com/user-attachments/assets/971db0bd-41e5-495b-b32b-f0e87f529622" />
-<img width="1352" height="806" alt="Screenshot 2026-06-06 at 9 06 52 PM" src="https://github.com/user-attachments/assets/5ba5ec5b-a306-4b91-b315-5976e4fe53d2" />
-<img width="1352" height="803" alt="Screenshot 2026-06-06 at 9 06 41 PM" src="https://github.com/user-attachments/assets/c63a6e72-a231-4c8f-aa4c-c939474467ba" />
-
+Private — MVP project.
