@@ -1,10 +1,6 @@
-# Deal Radar — Presentation Script
+# Deal Radar — Presentation Transcript
 
-> A word-for-word guide for recording your demo. Each section is labeled with what's on screen and what to say. Estimated run time: **8–10 minutes**.
-
----
-
-## Before you record
+## Before we dive in
 
 Make sure everything is running:
 
@@ -18,19 +14,17 @@ npm run dev -w @deal-radar/backend
 # Terminal 3 — frontend
 npm run dev -w @deal-radar/frontend
 
-# Terminal 4 — keep this ready, do NOT start mock yet
+# Terminal 4 — for mock events stream
 ```
 
-Have these tabs open in your browser:
+Tabs open in your browser:
 - **Tab 1** — http://localhost:3000 (dashboard)
 - **Tab 2** — http://localhost:4000/admin/queues (Bull Board)
 - **Tab 3** — http://localhost:4000/health (health check)
 
-Set your terminal font size to at least 14pt so logs are readable on camera.
-
 ---
 
-## Section 1 — Hook (0:00 – 0:45)
+## Section 1 — Hook
 
 **Screen: Dashboard at http://localhost:3000 — empty state**
 
@@ -40,13 +34,9 @@ Set your terminal font size to at least 14pt so logs are readable on camera.
 
 > "Deal Radar changes that. It watches your pipeline in real time, enforces MEDDICC data quality on every deal, and scores each opportunity with AI — surfacing health scores, risk levels, and concrete next steps directly on the dashboard."
 
-> "Let me show you how it works end to end."
-
 ---
 
-## Section 2 — Architecture overview (0:45 – 1:30)
-
-**Screen: Stay on the dashboard, or switch to a slide/diagram if you have one**
+## Section 2 — Architecture overview
 
 > "The system is built as a full-stack TypeScript monorepo."
 
@@ -56,11 +46,11 @@ Set your terminal font size to at least 14pt so logs are readable on camera.
 
 > "The worker deduplicates events, updates deal state, logs activity history, runs AI scoring, and pushes results to the browser over Server-Sent Events — all in a single atomic database transaction."
 
-> "Let me bring it to life."
+> "Let's bring it to life."
 
 ---
 
-## Section 3 — Start the mock generator, show Activity Stream (1:30 – 2:30)
+## Section 3 — Start the mock generator, show Activity Stream
 
 **Screen: Dashboard — Activity Stream panel on the left**
 
@@ -69,9 +59,7 @@ Switch to Terminal 4 and run:
 npm run mock
 ```
 
-Point at the Activity Stream as cards start appearing.
-
-> "I'm now running the mock CRM event generator. It's sending a random deal event every two seconds — stage changes, emails, meeting bookings, notes — for four deals in our pipeline."
+> "We're running the mock CRM event generator. It's sending a random deal event every two seconds — stage changes, emails, meeting bookings, notes — for four deals in our pipeline."
 
 > "Every card you see here is a real event that has been validated, queued, processed, and broadcast to this browser over a persistent Server-Sent Events connection. No polling. No page refresh."
 
@@ -81,15 +69,13 @@ Point at the connection status badge (top right of Activity Stream).
 
 Click the filter chips to show filtering.
 
-> "I can filter by event type — show me only stage changes, or only meetings. And I can pause the stream to inspect a specific event without losing the buffer."
+> "We can filter by event type — show me only stage changes, or only meetings. And We can pause the stream to inspect a specific event without losing the buffer."
 
 ---
 
-## Section 4 — Deal Panel, hygiene failure state (2:30 – 4:00)
+## Section 4 — Deal Panel, hygiene failure state
 
 **Screen: Deal Panel on the right side of the dashboard**
-
-Scroll to the Deal Panel and point at the deals appearing.
 
 > "Over here is the Deal Panel. As events come in, deals are being created and scored automatically."
 
@@ -113,7 +99,7 @@ Expand one of the blocking items.
 
 ---
 
-## Section 5 — Simulate a scored deal (4:00 – 5:30)
+## Section 5 — Simulate a scored deal
 
 **Screen: Terminal, then back to dashboard**
 
@@ -153,9 +139,9 @@ WHERE \"dealId\" = 'deal-demo-scored';
 "
 ```
 
-> "I'm now populating the MEDDICC fields directly — in a real integration, these would come from your CRM's deal record."
+> "We're now populating the MEDDICC fields directly — in a real integration, these would come from your CRM's deal record."
 
-Send a trigger event:
+Sending a trigger event:
 
 ```bash
 curl -X POST http://localhost:4000/api/webhook \
@@ -169,7 +155,7 @@ curl -X POST http://localhost:4000/api/webhook \
   }'
 ```
 
-> "I'll trigger a rescore by sending another event."
+> "We'll trigger a rescore by sending another event."
 
 Switch back to the dashboard and watch the deal update.
 
@@ -185,7 +171,7 @@ Expand the deal card fully.
 
 ---
 
-## Section 6 — Bull Board (5:30 – 6:30)
+## Section 6 — Bull Board
 
 **Screen: http://localhost:4000/admin/queues**
 
@@ -207,7 +193,7 @@ Point at Redis stats.
 
 ---
 
-## Section 7 — Health check and graceful shutdown (6:30 – 7:00)
+## Section 7 — Health check and graceful shutdown
 
 **Screen: http://localhost:4000/health**
 
@@ -221,7 +207,7 @@ Back to the dashboard.
 
 ---
 
-## Section 8 — Technical summary (7:00 – 8:30)
+## Section 8 — Technical summary
 
 **Screen: Dashboard or code editor — your choice**
 
@@ -239,7 +225,7 @@ Back to the dashboard.
 
 ---
 
-## Section 9 — Close (8:30 – 9:00)
+## Section 9 — Close
 
 **Screen: Dashboard with a mix of scored and hygiene-failed deals**
 
@@ -248,8 +234,6 @@ Restart the mock generator:
 npm run mock
 ```
 
-Let events flow for a few seconds while you speak.
-
 > "Deal Radar demonstrates how modern sales tooling should work — not a passive data store, but an active system that watches your pipeline, enforces qualification standards, and tells you exactly where to focus."
 
 > "Real-time event ingestion. Async processing with a resilient queue. AI scoring grounded in a structured methodology. Live dashboard updates without polling. And full operational visibility built in."
@@ -257,15 +241,3 @@ Let events flow for a few seconds while you speak.
 > "Everything here is production-hardened — typed end to end, graceful shutdown, error boundaries, retry logic, idempotency — not just a demo that works once."
 
 > "Thank you."
-
----
-
-## Recording tips
-
-- **Pace yourself.** The most common mistake is rushing. Pause after each point lands.
-- **Name things as you click them.** "This is the Deal Panel... this is the hygiene card..." Don't assume the viewer sees what you see.
-- **Zoom in** when showing terminal output or small UI text. Screen recording compression makes small text unreadable.
-- **One terminal per purpose.** Label each terminal window before recording: `BACKEND`, `FRONTEND`, `MOCK`, `DEMO COMMANDS`.
-- **Clear terminal history** before recording so the first visible output is your demo commands.
-- **Pre-run the DB update command** in a text file so you can paste it cleanly during the demo without typing.
-- **Disable notifications** (macOS: Focus mode; Windows: Do Not Disturb) before hitting record.
